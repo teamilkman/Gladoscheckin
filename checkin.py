@@ -90,6 +90,7 @@ if __name__ == '__main__':
     
     # 推送消息
     # 未设置 sckey 则不进行推送
+    print(title)
     if not sckey:
         print("Not push")
     else:
