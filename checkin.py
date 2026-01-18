@@ -49,11 +49,11 @@ if __name__ == '__main__':
                 points = result.get('points')
 
                 # 获取账号当前状态
-                result = state.json()
+                #result = state.json()
                 # 获取剩余时间
-                leftdays = int(float(result['data']['leftDays']))
+                #leftdays = int(float(result['data']['leftDays']))
                 # 获取账号email
-                email = result['data']['email']
+                #email = result['data']['email']
                 
                 print(check_result)
                 if "Checkin! Got" in check_result:
@@ -66,16 +66,16 @@ if __name__ == '__main__':
                     fail += 1
                     message_status = "签到失败，请检查..."
 
-                if leftdays is not None:
-                    message_days = f"{leftdays} 天"
-                else:
-                    message_days = "error"
+                #if leftdays is not None:
+                #    message_days = f"{leftdays} 天"
+                #else:
+                #    message_days = "error"
             else:
                 email = ""
                 message_status = "签到请求URL失败, 请检查..."
                 message_days = "error"
 
-            context += "账号: " + email + ", P: " + str(points) +", 剩余: " + message_days + " | "
+            #context += "账号: " + email + ", P: " + str(points) +", 剩余: " + message_days + " | "
 
         # 推送内容 
         title = f'Glados, 成功{success},失败{fail},重复{repeats}'
@@ -96,4 +96,5 @@ if __name__ == '__main__':
     else:
         pushdeer = PushDeer(pushkey=sckey) 
         pushdeer.send_text(title, desp=context)
+
 
