@@ -102,6 +102,8 @@ class Config:
     ENV_COOKIES = "GLADOS_COOKIES"
     ENV_EXCHANGE_PLAN = "GLADOS_EXCHANGE_PLAN"
     ENV_VERBOSE = "GLADOS_VERBOSE"
+    ENV_UA = "GLADOS_UA"
+    ENV_DOMAINS = "GLADOS_DOMAINS"
 
     """默认兑换计划（none 表示不自动兑换）"""
     DEFAULT_EXCHANGE_PLAN = "none"
@@ -125,6 +127,8 @@ class Config:
         self.cookies_list: List[str] = []
         self.exchange_plan: str = self.DEFAULT_EXCHANGE_PLAN
         self.verbose: bool = self.DEFAULT_VERBOSE
+        self.user_agent: str = ""
+        self.domains: List[str] = list(self.DOMAINS)
         self._load_config()
 
     def _load_config(self) -> None:
@@ -134,6 +138,8 @@ class Config:
         raw_cookies_env: Optional[str] = os.environ.get(self.ENV_COOKIES)
         exchange_plan_env: Optional[str] = os.environ.get(self.ENV_EXCHANGE_PLAN)
         verbose_env: Optional[str] = os.environ.get(self.ENV_VERBOSE)
+        ua_env: Optional[str] = os.environ.get(self.ENV_UA) or os.environ.get("GLADOS_USER_AGENT")
+        domains_env: Optional[str] = os.environ.get(self.ENV_DOMAINS)
 
         if not push_key_env:
             logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_PUSH_KEY}' 未设置。")
@@ -154,6 +160,28 @@ class Config:
             self.cookies_list = [cookie.strip() for cookie in raw_cookies_env.split("&") if cookie.strip()]
             if not self.cookies_list:
                 raise ValueError(f"环境变量 '{self.ENV_COOKIES}' 已设置，但未包含任何有效的 Cookie。")
+            self._check_cookie_format()
+
+        if domains_env:
+            parsed_domains: List[str] = []
+            for raw_domain in domains_env.replace(",", " ").replace(";", " ").split():
+                domain = raw_domain.strip().lower()
+                for prefix in ("https://", "http://"):
+                    if domain.startswith(prefix):
+                        domain = domain[len(prefix):]
+                domain = domain.strip("/")
+                if domain and domain not in parsed_domains:
+                    parsed_domains.append(domain)
+            if parsed_domains:
+                self.domains = parsed_domains
+            else:
+                logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_DOMAINS}' 为空或格式无效，将使用默认域名。")
+
+        if ua_env and ua_env.strip():
+            self.user_agent = ua_env.strip()
+            logger.info(f"{LogEmoji.INFO} 使用自定义 User-Agent: {self.user_agent}")
+        else:
+            logger.info(f"{LogEmoji.INFO} 未设置 {self.ENV_UA}，使用默认 Windows Chrome User-Agent。")
 
         if not exchange_plan_env:
             logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_EXCHANGE_PLAN}' 未设置，将使用默认设置（不自动兑换）。")
@@ -181,6 +209,23 @@ class Config:
 
         logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_VERBOSE}: {self.verbose}。")
 
+    def _check_cookie_format(self) -> None:
+        """检查 Cookie 是否为 GLaDOS 新版 gld:sess 格式（不输出 Cookie 内容）"""
+        for index, cookie in enumerate(self.cookies_list, 1):
+            if "gld:sess=" in cookie and "gld:sess.sig=" in cookie:
+                continue
+            if "koa:sess=" in cookie:
+                logger.error(
+                    f"{LogEmoji.ERROR} Cookie #{index} 是旧版 koa:sess。GLaDOS 自 2026-09 起改用 gld:sess，"
+                    "旧 Cookie 会返回“没有权限”。请重新登录 https://glados.cloud，在 F12 → Network → "
+                    "请求头中复制包含 gld:sess 与 gld:sess.sig 的完整 Cookie，并更新 Secret GLADOS_COOKIES。"
+                )
+            else:
+                logger.warning(
+                    f"{LogEmoji.WARNING} Cookie #{index} 未检测到 gld:sess / gld:sess.sig。"
+                    "请确认复制的是重新登录后的完整 Cookie，否则可能返回“没有权限”。"
+                )
+
 
 # 各平台合法 User-Agent（版本号无关，仅平台 token 关键）
 PLATFORM_UA = {
@@ -200,10 +245,11 @@ class API:
     POINTS_URL = APIEndpoint.POINTS.value
     EXCHANGE_URL = APIEndpoint.EXCHANGE.value
 
-    def __init__(self, domain: str, cookie_index: int = 0, verbose: bool = False):
+    def __init__(self, domain: str, cookie_index: int = 0, verbose: bool = False, user_agent: str = ""):
         self.domain: str = domain
         self.cookie_index: int = cookie_index
         self.verbose: bool = verbose
+        self.user_agent: str = user_agent or PLATFORM_UA["Windows"]
         self.headers: Dict[str, str] = self._get_headers()
         self._device_ua_cache: Dict[str, str] = {}
         self.session = requests.Session()
@@ -245,7 +291,7 @@ class API:
         """获取请求头"""
         return {
             "origin": f"https://{self.domain}",
-            "user-agent": PLATFORM_UA["Windows"],
+            "user-agent": self.user_agent,
         }
 
     def _log(self, level: str, emoji: str, message: str, force: bool = False) -> None:
@@ -300,8 +346,8 @@ class API:
         url = self._get_full_url(self.CHECKIN_URL)
         checkin_data = self._get_checkin_data()
 
-        # 起始 UA 优先复用已学得的设备 UA，否则用会话默认 UA
-        start_ua = self._device_ua_cache.get("_last") or self.headers.get("user-agent")
+        # 起始 UA 优先复用已学得的设备 UA，否则用配置/默认 UA
+        start_ua = self._device_ua_cache.get("_last") or self.user_agent
 
         raw = self._checkin_attempt(url, checkin_data, cookies, start_ua)
 
@@ -378,7 +424,14 @@ class API:
                 else:
                     self._log("error", LogEmoji.ERROR, f"服务端拒绝签到(code=4, reason={reason})，请检查账户风控状态", force=True)
             elif code == -2:
-                self._log("error", LogEmoji.ERROR, f"无权限(code=-2)：Cookie 可能已失效，请重新登录 {self.domain} 刷新 Cookie 并更新仓库 Secret GLADOS_COOKIES 后重试", force=True)
+                self._log(
+                    "error",
+                    LogEmoji.ERROR,
+                    "无权限(code=-2)：通常是 Cookie 已失效/仍是旧版 koa:sess，"
+                    "或请求 UA 与登录设备不一致。请重新登录后复制包含 gld:sess 与 gld:sess.sig 的完整 Cookie，"
+                    "并在 Secret GLADOS_UA 中填入登录浏览器的 navigator.userAgent 后重试",
+                    force=True,
+                )
             else:
                 self._log("error", LogEmoji.ERROR, f"未预期响应(code={code}, message={message})，请检查 GLaDOS 服务状态或 Cookie", force=True)
             result["code"] = CheckinStatus.FAILURE
@@ -486,6 +539,8 @@ def render_payload(payload: dict, line_sep: str = "\n") -> str:
         )
         if r.get("exchange"):
             line += f" · {r['exchange']}"
+        if r.get("status") == "签到失败" and r.get("message"):
+            line += f" · {r['message']}"
         lines.append(line)
     note = payload.get("note")
     if note:
@@ -597,7 +652,7 @@ class Checker:
     def checkin_all(self):
         """执行所有签到任务"""
         cookie_count = len(self.config.cookies_list)
-        domain_count = len(self.config.DOMAINS)
+        domain_count = len(self.config.domains)
         total_tasks = cookie_count * domain_count
         task_idx = 0
 
@@ -606,7 +661,7 @@ class Checker:
         for cookie_idx, cookie in enumerate(self.config.cookies_list, 1):
             logger.info(f"{LogEmoji.START} ========== 开始处理 Cookie {cookie_idx} ==========")
 
-            for domain in self.config.DOMAINS:
+            for domain in self.config.domains:
                 task_idx += 1
                 logger.info(f"{LogEmoji.INFO} ----- 任务 {task_idx}/{total_tasks}: {LogEmoji.COOKIE}[{cookie_idx}] on {LogEmoji.DOMAIN}[{domain}] -----")
 
@@ -624,7 +679,7 @@ class Checker:
     def _checkin_on_domain(self, cookie: str, cookie_idx: int, domain: str) -> CheckinResult:
         result = CheckinResult(cookie_idx, domain)
 
-        with API(domain, cookie_idx, verbose=self.config.verbose) as api:
+        with API(domain, cookie_idx, verbose=self.config.verbose, user_agent=self.config.user_agent) as api:
             self._log(cookie_idx, domain, LogEmoji.STATUS, "查询剩余天数")
             days_str, status_code = api.get_status(cookie)
             result.days = days_str
@@ -683,6 +738,7 @@ class Checker:
                 "days": res["days"],
                 "points_total": res["points_total"],
                 "exchange": res["exchange"],
+                "message": res.get("message", ""),
             })
 
         return {
@@ -707,6 +763,7 @@ def main():
         if not config.cookies_list:
             logger.error(f"{LogEmoji.ERROR} 未找到有效的 Cookie, 退出程序。")
             payload = {"title": "# 未找到 cookies!", "rows": []}
+            exit_code = 1
         else:
             logger.info(f"{LogEmoji.START} 步骤 2: 执行签到")
             checker = Checker(config)
@@ -715,6 +772,10 @@ def main():
             logger.info(f"{LogEmoji.START} 步骤 3: 格式化结果")
             payload = checker.format_results()
             logger.info(f"\n{LogEmoji.END} ========== 签到总结 ==========\n{payload['title']}\n{render_payload(payload)}")
+
+            # 全部任务都失败时让 Actions 变红，避免“签到失败但工作流显示成功”
+            if payload["fail"] > 0 and payload["success"] == 0 and payload["repeat"] == 0:
+                exit_code = 1
 
     except Exception as e:
         logger.error(f"{LogEmoji.ERROR} 主程序执行过程中发生未预期的错误: {e}")

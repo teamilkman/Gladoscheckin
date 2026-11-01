@@ -53,11 +53,15 @@ jobs:
         GLADOS_COOKIES: ${{ secrets.GLADOS_COOKIES }}
         GLADOS_EXCHANGE_PLAN: ${{ secrets.GLADOS_EXCHANGE_PLAN }}
         GLADOS_VERBOSE: ${{ secrets.GLADOS_VERBOSE }}
+        GLADOS_UA: ${{ secrets.GLADOS_UA }}
+        GLADOS_DOMAINS: ${{ secrets.GLADOS_DOMAINS }}
 
     - name: Keep alive
+      if: always()
       uses: liskin/gh-workflow-keepalive@v1 
         
     - name: Delete workflow runs
+      if: always()
       uses: Mattraks/delete-workflow-runs@v2
       with:
         token: ${{ github.token }}

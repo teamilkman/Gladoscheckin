@@ -33,19 +33,39 @@
 
 #### 3.1 GLADOS_COOKIES（必填）
 
-对应 GLaDOS 账号 Cookie 中的有效部分，获取方式：
+对应 GLaDOS 账号 Cookie 中的有效部分。**2026-09 起 GLaDOS 已把会话 Cookie 从 `koa:sess` 改为 `gld:sess`，只复制旧版 `koa:sess` 会返回“没有权限”。**
 
-- 在 GLaDOS 签到页面按 `F12`，切换到 `Network` 页面下，刷新
-- 点击第一个请求，在 `Request Headers` 下找到 `Cookie`，右键复制其值即可
+获取方式：
 
-  > 参考格式：`koa:sess=eyJ1c2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxAwMH0=; koa:sess.sig=xJkOxxxxxxxxxxxxxxxtnM;`
+- 重新登录 <https://glados.cloud>（必须重新登录一次，让服务端下发新版 Cookie）
+- 按 `F12`，切换到 `Network` 页面下，刷新
+- 点击任意请求（如 `status` 或 `checkin`），在 `Request Headers` 下找到 `Cookie`，复制完整值
+
+  > 参考格式：`gld:sess=eyJ1c2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxAwMH0=; gld:sess.sig=xJkOxxxxxxxxxxxxxxxtnM; koa:sess=...; koa:sess.sig=...;`
+  >
+  > 重点是必须包含 `gld:sess` 与 `gld:sess.sig`，建议把四个 Cookie 全部带上。
 
 - 多账号请在 `COOKIES` 中添加多个 cookies，中间使用 `&` 连接即可（例如：`c1&c2&c3`）
 
 ![图片加载失败](imgs/2.png)
 ![图片加载失败](imgs/3.png)
 
-#### 3.2 GLADOS_EXCHANGE_PLAN（非必填）
+#### 3.2 GLADOS_UA（建议填写）
+
+GLaDOS 会校验请求的 User-Agent 是否与登录设备一致，不一致时也会返回“没有权限”。
+
+- 在获取 Cookie 的同一个浏览器控制台执行 `navigator.userAgent`，把输出原样填入 Secret `GLADOS_UA`
+- 浏览器大版本更新后 UA 会变化，如果再次出现“没有权限”，重新登录并同时更新 Cookie 与 `GLADOS_UA`
+
+#### 3.3 GLADOS_DOMAINS（非必填）
+
+默认会依次尝试 `glados.cloud` 和 `railgun.info`。如需只跑某个域名或增加镜像，可配置 Secret `GLADOS_DOMAINS`，多个域名用逗号分隔，例如：
+
+```text
+glados.cloud,railgun.info
+```
+
+#### 3.4 GLADOS_EXCHANGE_PLAN（非必填）
 
 配置自动兑换积分策略：
 
@@ -57,7 +77,7 @@
 
 > 不配置时默认不进行自动兑换；如需兑换，设置 `GLADOS_EXCHANGE_PLAN` 为 `plan100` / `plan200` / `plan500`。
 
-#### 3.3 手机推送（非必填）
+#### 3.5 手机推送（非必填）
 
 支持多个推送后端，可在 `Settings`→`Secrets and variables`→`Action` 中按需配置，**任一后端配置后即会推送，支持同时配置多个（都发）**：
 
@@ -74,10 +94,13 @@
 - **2026-04**: 优化代码逻辑与日志输出，支持[新版域名](https://railgun.info)，在 `GLADOS_COOKIES` 中添加新版域名下的 cookies 即可使用。
 - **2026-09**: 设备平台自适应重试（无需手动配置 UA 即可自动恢复签到）；网络层自动重试与退避，降低 CI 网络抖动导致的误报失败；日志时间统一为北京时间，定时任务调整为北京时间每天 2 次并避开整点高峰；默认关闭自动兑换，需显式配置后才启用。
 - **2026-10**: 日志级别短标签 `[I]/[W]/[E]` ；推送兼容 Server酱（策略模式多后端「都发」），新增 `requirements.txt` 。
+- **2026-11**: 适配 GLaDOS 新版 `gld:sess` 会话；支持 `GLADOS_UA` 自定义设备 UA 与 `GLADOS_DOMAINS` 自定义域名；旧版 `koa:sess` Cookie 会给出明确告警；全部签到失败时工作流会标记为失败，不再“假成功”。
 
 ## 问题排查与定位
 
-大家可以通过查询 Actions 中的 running checkin 日志快速定位问题，有其他问题提交 issue。
+- **日志提示“无权限 (code=-2)” / “没有权限”**：Cookie 不是新版 `gld:sess`，或请求 UA 与登录设备不一致。请重新登录 <https://glados.cloud>，按 3.1 重新复制完整 Cookie，并按 3.2 配置 `GLADOS_UA` 后重新运行。
+- **工作流显示红色失败**：说明本轮所有账号/域名都签到失败，请按上面的日志提示处理；只要有一个账号成功或重复签到，工作流仍为绿色。
+- 其他问题可通过查询 Actions 中的 running checkin 日志快速定位。
 
   <img width="1684" height="844" alt="image" src="https://github.com/user-attachments/assets/45348a5f-43e4-45f5-8fdf-ce84d343b30d" />
 
