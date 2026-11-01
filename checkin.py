@@ -233,7 +233,18 @@ class Config:
             for segment in cookie.split(";"):
                 if "=" in segment:
                     name, value = segment.split("=", 1)
-                    fields.append(f"{name.strip()}({len(value.strip())})")
+                    name = name.strip()
+                    value = value.strip()
+                    detail = f"{name}({len(value)}"
+                    if name == "gld:sess":
+                        if value.startswith("gld_"):
+                            detail += ",gld_"
+                        if re.fullmatch(r"[0-9a-fA-F]+", value.removeprefix("gld_")):
+                            detail += ",hex"
+                        if value[:1] in ("'", '"') or value[-1:] in ("'", '"'):
+                            detail += ",quoted"
+                    detail += ")"
+                    fields.append(detail)
             logger.info(f"{LogEmoji.INFO} Cookie #{index} 字段: {', '.join(fields) if fields else '无法解析'}")
             if "gld:sess=" in cookie and "gld:sess.sig=" in cookie:
                 continue
