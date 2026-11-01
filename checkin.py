@@ -245,13 +245,16 @@ class API:
     POINTS_URL = APIEndpoint.POINTS.value
     EXCHANGE_URL = APIEndpoint.EXCHANGE.value
 
+    # 同一轮运行内共享“学到的 UA”，避免每个域名都重新试错
+    _shared_ua_cache: Dict[str, str] = {}
+
     def __init__(self, domain: str, cookie_index: int = 0, verbose: bool = False, user_agent: str = ""):
         self.domain: str = domain
         self.cookie_index: int = cookie_index
         self.verbose: bool = verbose
         self.user_agent: str = user_agent or PLATFORM_UA["Windows"]
         self.headers: Dict[str, str] = self._get_headers()
-        self._device_ua_cache: Dict[str, str] = {}
+        self._device_ua_cache: Dict[str, str] = API._shared_ua_cache
         self.session = requests.Session()
         self.session.headers.update(self.headers)
         # 网络抖动时自动重试（指数退避），避免误报失败
@@ -293,6 +296,10 @@ class API:
             "origin": f"https://{self.domain}",
             "user-agent": self.user_agent,
         }
+
+    def _current_ua(self) -> str:
+        """优先使用本轮已学到的可用 UA"""
+        return self._device_ua_cache.get("_last") or self.user_agent
 
     def _log(self, level: str, emoji: str, message: str, force: bool = False) -> None:
         """统一日志输出方法"""
@@ -358,8 +365,33 @@ class API:
             if recover_ua and recover_ua != start_ua:
                 self._log("warning", LogEmoji.WARNING, f"设备平台不匹配 (loginDevice={login_device})，切换 UA 重试", force=True)
                 raw = self._checkin_attempt(url, checkin_data, cookies, recover_ua)
+        # 新版接口对 UA 不匹配也返回 code -2（没有权限），逐个平台 UA 兜底尝试
+        elif self._is_no_permission(raw):
+            raw = self._retry_with_platform_uas(url, checkin_data, cookies, start_ua)
 
         return self._parse_checkin(raw)
+
+    @staticmethod
+    def _is_no_permission(raw: Optional[Dict]) -> bool:
+        """判断是否为“没有权限”（Cookie 失效或设备 UA 不匹配）"""
+        if not raw or raw.get("code") != -2:
+            return False
+        message = str(raw.get("message", "")).strip().lower()
+        return "权限" in message or "permission" in message
+
+    def _retry_with_platform_uas(self, url: str, data: Dict, cookies: str, start_ua: str) -> Optional[Dict]:
+        """用各平台标准 UA 依次重试，命中登录设备后即返回"""
+        raw: Optional[Dict] = None
+        tried = {start_ua}
+        for device, ua in PLATFORM_UA.items():
+            if ua in tried:
+                continue
+            tried.add(ua)
+            self._log("warning", LogEmoji.WARNING, f"无权限，尝试 {device} UA 重试", force=True)
+            raw = self._checkin_attempt(url, data, cookies, ua)
+            if raw and raw.get("code") in (CheckinStatus.SUCCESS.value, CheckinStatus.REPEAT.value):
+                return raw
+        return raw
 
     def _checkin_attempt(self, url: str, data: Dict, cookies: str, user_agent: str) -> Optional[Dict]:
         """发起一次签到请求并返回解析后的响应体（失败返回 None）"""
@@ -446,7 +478,7 @@ class API:
         """获取状态"""
 
         url = self._get_full_url(self.STATUS_URL)
-        response = self._make_request(url, "GET", cookies=cookies)
+        response = self._make_request(url, "GET", cookies=cookies, user_agent=self._current_ua())
 
         if response:
             data = response.json()
@@ -468,7 +500,7 @@ class API:
     def get_points(self, cookies: str) -> Tuple[str, int]:
         """获取积分"""
         url = self._get_full_url(self.POINTS_URL)
-        response = self._make_request(url, "GET", cookies=cookies)
+        response = self._make_request(url, "GET", cookies=cookies, user_agent=self._current_ua())
 
         if response:
             data = response.json()
@@ -492,7 +524,7 @@ class API:
     def exchange(self, cookies: str, plan: str, required_points: int) -> str:
         """执行兑换"""
         url = self._get_full_url(self.EXCHANGE_URL)
-        response = self._make_request(url, "POST", {"planType": plan}, cookies)
+        response = self._make_request(url, "POST", {"planType": plan}, cookies, user_agent=self._current_ua())
 
         if response:
             data = response.json()
@@ -688,6 +720,10 @@ class Checker:
             checkin_result = api.checkin(cookie)
             result.status = checkin_result["status"]
             result.code = checkin_result.get("code", CheckinStatus.FAILURE)
+
+            # 签到成功后如果之前没查到天数，说明初始 UA 不对；用学到的 UA 再查一次
+            if result.days == "None 天" and result.code in (CheckinStatus.SUCCESS, CheckinStatus.REPEAT):
+                result.days, _ = api.get_status(cookie)
 
             self._log(cookie_idx, domain, LogEmoji.POINTS, "查询总积分")
             points_str, points_num = api.get_points(cookie)

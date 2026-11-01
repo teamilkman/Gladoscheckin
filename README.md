@@ -55,6 +55,7 @@
 GLaDOS 会校验请求的 User-Agent 是否与登录设备一致，不一致时也会返回“没有权限”。
 
 - 在获取 Cookie 的同一个浏览器控制台执行 `navigator.userAgent`，把输出原样填入 Secret `GLADOS_UA`
+- 不填时脚本会依次尝试 Windows / macOS / Linux / iPhone / Android 的标准 UA；如果登录设备是 Firefox 等非 Chrome 浏览器，自动重试可能仍不匹配，建议手动填写
 - 浏览器大版本更新后 UA 会变化，如果再次出现“没有权限”，重新登录并同时更新 Cookie 与 `GLADOS_UA`
 
 #### 3.3 GLADOS_DOMAINS（非必填）
