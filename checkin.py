@@ -161,6 +161,7 @@ class Config:
             self.cookies_list = [cookie.strip() for cookie in raw_cookies_env.split("&") if cookie.strip()]
             if not self.cookies_list:
                 raise ValueError(f"环境变量 '{self.ENV_COOKIES}' 已设置，但未包含任何有效的 Cookie。")
+            self._normalize_cookies()
             self._check_cookie_format()
 
         if domains_env:
@@ -209,6 +210,21 @@ class Config:
                 logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_VERBOSE}' 的值 '{verbose_env}' 无效，将使用默认值 {self.DEFAULT_VERBOSE}。")
 
         logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_VERBOSE}: {self.verbose}。")
+
+    def _normalize_cookies(self) -> None:
+        """修正常见的复制问题：gld:sess 的值漏掉 gld_ 前缀"""
+        for index, cookie in enumerate(self.cookies_list, 1):
+            match = re.search(r"gld:sess=([^;]*)", cookie)
+            if not match:
+                continue
+            value = match.group(1).strip()
+            if re.fullmatch(r"[0-9a-fA-F]{52}", value):
+                self.cookies_list[index - 1] = cookie.replace(
+                    f"gld:sess={value}", f"gld:sess=gld_{value}", 1
+                )
+                logger.warning(
+                    f"{LogEmoji.WARNING} Cookie #{index} 的 gld:sess 缺少 gld_ 前缀，已自动补全后重试。"
+                )
 
     def _check_cookie_format(self) -> None:
         """检查 Cookie 是否为 GLaDOS 新版 gld:sess 格式（只输出字段名和长度，不输出值）"""
