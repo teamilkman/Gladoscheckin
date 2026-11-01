@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass
 from enum import Enum
@@ -259,7 +260,7 @@ class API:
         self.cookie_index: int = cookie_index
         self.verbose: bool = verbose
         self.user_agent: str = user_agent or PLATFORM_UA["Windows"]
-        self.headers: Dict[str, str] = self._get_headers()
+        self.headers: Dict[str, str] = self._get_headers(self.user_agent)
         self._device_ua_cache: Dict[str, str] = API._shared_ua_cache
         self.session = requests.Session()
         self.session.headers.update(self.headers)
@@ -296,12 +297,40 @@ class API:
         self.close()
         return False
 
-    def _get_headers(self) -> Dict[str, str]:
-        """获取请求头"""
-        return {
+    def _get_headers(self, user_agent: Optional[str] = None) -> Dict[str, str]:
+        """按当前 UA 生成与浏览器一致的反爬/设备校验请求头"""
+        ua = user_agent or self.user_agent
+        headers: Dict[str, str] = {
             "origin": f"https://{self.domain}",
-            "user-agent": self.user_agent,
+            "referer": f"https://{self.domain}/console/checkin",
+            "user-agent": ua,
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
         }
+
+        # Chrome/Edge 会带 Client Hints；GLaDOS 新版设备校验会比对它们
+        chrome = re.search(r"(?:Chrome|Chromium)/(\d+)", ua)
+        if chrome:
+            major = chrome.group(1)
+            if "Macintosh" in ua:
+                platform = "macOS"
+            elif "Windows" in ua:
+                platform = "Windows"
+            elif "Android" in ua:
+                platform = "Android"
+            elif "Linux" in ua:
+                platform = "Linux"
+            else:
+                platform = "Unknown"
+            headers.update({
+                "sec-ch-ua": f'"Chromium";v="{major}", "Google Chrome";v="{major}", "Not_A Brand";v="99"',
+                "sec-ch-ua-mobile": "?1" if "Mobile" in ua else "?0",
+                "sec-ch-ua-platform": f'"{platform}"',
+            })
+        return headers
 
     def _current_ua(self) -> str:
         """优先使用本轮已学到的可用 UA"""
@@ -327,9 +356,7 @@ class API:
 
     def _make_request(self, url: str, method: str, data: Optional[Dict] = None, cookies: str = "", user_agent: Optional[str] = None) -> Optional[requests.Response]:
         """发送 HTTP 请求"""
-        session_headers = self.headers.copy()
-        if user_agent:
-            session_headers["user-agent"] = user_agent
+        session_headers = self._get_headers(user_agent or self.user_agent)
         session_headers["cookie"] = cookies
 
         try:
