@@ -210,8 +210,14 @@ class Config:
         logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_VERBOSE}: {self.verbose}。")
 
     def _check_cookie_format(self) -> None:
-        """检查 Cookie 是否为 GLaDOS 新版 gld:sess 格式（不输出 Cookie 内容）"""
+        """检查 Cookie 是否为 GLaDOS 新版 gld:sess 格式（只输出字段名和长度，不输出值）"""
         for index, cookie in enumerate(self.cookies_list, 1):
+            fields = []
+            for segment in cookie.split(";"):
+                if "=" in segment:
+                    name, value = segment.split("=", 1)
+                    fields.append(f"{name.strip()}({len(value.strip())})")
+            logger.info(f"{LogEmoji.INFO} Cookie #{index} 字段: {', '.join(fields) if fields else '无法解析'}")
             if "gld:sess=" in cookie and "gld:sess.sig=" in cookie:
                 continue
             if "koa:sess=" in cookie:
